@@ -74,8 +74,6 @@ echo "#SBATCH --arr=1-${array_length}${limiter}"
 echo "#SBATCH --output=${logdir}/%A.%a.out"
 [ ! -z $options ] && cat $options
 
-echo record_job_state
-
 if [ "$array_length" -lt "$ncmds" ]; then
     # split command file
     echo "split ${commands} -n l/\${SLURM_ARRAY_TASK_ID}/${array_length} | while read LINE; do echo \"[SLURM] \$LINE\" && eval \" \$LINE\"; done"
