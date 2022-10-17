@@ -1,0 +1,87 @@
+#! /bin/bash
+
+# Set mode to array if stdin is not empty
+[[ -t 0 ]] && echo "ERR: need to pipe commands to stdin" && exit 1
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -o|--opts)
+        options=$2
+        shift
+        shift
+        ;;
+
+        -N)
+        array_length="$2"
+        shift # past argument
+        shift # past value
+        ;;
+
+        -I)
+        ncmds_per_job="$2"
+        shift
+        shift
+        ;;
+
+        -J)
+        jobname="$2"
+        shift
+        shift
+        ;;
+
+        -P)
+        job_slot_limit="$2"
+        shift
+        shift
+        ;;
+
+    esac
+done
+
+# restore positional parameters
+set -- "${positional[@]}"
+
+subid=$(date +"%Y-%m-%d")
+
+# --------------------- Job array mode ---------------
+
+# Choose a random tag to store commands
+tag=$(echo $RANDOM | md5sum | head -c 8)
+root=${HOME}/.commands
+commands=${root}/${tag}
+mkdir -p $root
+
+# text piped to script is written to command file
+cp /dev/stdin ${commands}
+
+ncmds=$(wc -l < ${commands})
+if [ -n "$ncmds_per_job" ]; then
+    array_length=$((${ncmds}/${ncmds_per_job}))
+fi
+
+if [ -z "$array_length" ]; then
+    array_length=$ncmds
+fi
+
+[ -z $job_slot_limit ] && limiter="" || limiter="%${job_slot_limit}"
+
+logdir=logs/${jobname:-other}
+mkdir -p $logdir
+
+echo "#! /bin/bash"
+[ ! -z $jobname ] && echo "#SBATCH --job-name=${jobname}"
+echo "#SBATCH --arr=1-${array_length}${limiter}"
+echo "#SBATCH --output=${logdir}/%A.%a.out"
+[ ! -z $options ] && cat $options
+
+echo record_job_state
+
+if [ "$array_length" -lt "$ncmds" ]; then
+    # split command file
+    echo "split ${commands} -n l/\${SLURM_ARRAY_TASK_ID}/${array_length} | while read LINE; do echo \"[SLURM] \$LINE\" && eval \" \$LINE\"; done"
+
+else
+    # submit each job independently
+    echo "LINE=\$(sed -n \"\$SLURM_ARRAY_TASK_ID\"p ${commands})"
+    echo "echo \"[SLURM] \$LINE\" && eval \" \$LINE\""
+fi
