@@ -1,0 +1,108 @@
+#! /cluster/customapps/biomed/grlab/users/starks/miniconda3/bin/python
+import re
+import os
+import sys
+import pandas as pd
+import subprocess
+from io import StringIO
+from tabulate import tabulate
+
+
+USER = os.environ.get('USER')
+
+
+def bang(command):
+    p = subprocess.Popen(
+            command, shell=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE
+    )
+
+    stdout, stderr = p.communicate()
+    return stdout, stderr
+
+
+def sacct(*jobids):
+    unfold = re.compile(r'\d+_\[(\d+)-(\d+)')
+    j = ','.join(jobids)
+
+    command = f'sacct -n -X -u starks --format=jobid%-100,jobname%-50,state -j {j} -P'
+    stdout, stderr = bang(command)
+    assert stderr is None
+
+    df = pd.read_csv(
+        StringIO(stdout.decode()),
+        sep='|',
+        header=None)
+
+    df.columns = ['jobid', 'jobname', 'state']
+    df['array'] = df['jobid'].str.extract(r'(\d+)_').astype(int)
+
+    def unfold_jobs(jobid):
+        try:
+            start, stop = unfold.search(jobid).groups()
+            return int(stop) - int(start) + 1
+        except AttributeError:
+            return 1
+
+    df['count'] = df['jobid'].apply(unfold_jobs)
+
+    return df
+
+
+def get_job_array_ids_from_sacct(active=True):
+    joblist = f'sacct -X -n -u {USER} -o jobid'
+    if active:
+        joblist = f'{joblist} --state running --state pending'
+
+    command = f"{joblist} | grep '_' | cut -d '_' -f 1 | sort | uniq"
+    stdout, stderr = bang(command)
+    assert stderr is None
+    return stdout.decode().split()
+
+
+def main():
+    if not sys.stdin.isatty():
+        try:
+            jobids = pd.read_csv(
+                    sys.stdin, sep='|',
+                    usecols=['JobID']).squeeze().astype(str).values
+            jobids = list(set(x.split('_')[0] for x in jobids if '_' in x))
+        except ValueError:
+            sys.stderr.write('Use sacct -P')
+
+    else:
+        _, *jobids = sys.argv
+        if len(jobids) == 0:
+            jobids = get_job_array_ids_from_sacct()
+            if len(jobids) == 0:
+                sys.stderr.write('No job arrays found in sacct\n')
+                return
+
+    assert len(jobids) > 0
+    sa = sacct(*jobids)
+    jobnames = sa[['array', 'jobname']].drop_duplicates().set_index('array')['jobname']
+
+    counts = (
+        sa
+        .pivot_table(index='array', columns='state', values='count', aggfunc='sum')
+        .rename_axis(columns=None, index='JobID')
+    )
+
+    columns = {
+        x
+        for x in counts.columns
+        if x not in {'PENDING', 'RUNNING', 'COMPLETED', 'FAILED'}
+    }
+
+    order = ['JobName', 'PENDING', 'RUNNING', 'COMPLETED', 'FAILED'] + sorted(columns)
+
+    counts = counts.reindex(columns=order).fillna(0).astype(int)
+    counts['JobName'] = jobnames
+    counts = counts.reset_index()
+
+    print(tabulate(counts.values, counts.columns))
+
+
+if __name__ == '__main__':
+    main()
