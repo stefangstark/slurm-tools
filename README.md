@@ -6,7 +6,7 @@ Some QOL tools I wrote for interacting with SLURM.
 ## Job Submission with `sprep`
 `sprep` helps group and submit commands as a SLURM job group
 
-Given a list of commands, `sprep` writes them to a text file and then submits a SLURM command to run commands from this text file
+Given a list of commands, `sprep` writes them to a text file and then submits a SLURM command run them
 - basically a CLI version of this [tutorial](https://scicomp.ethz.ch/wiki/Job_arrays#Using_a_.22commands.22_file)
 
 I typically ran it using this format:
